@@ -1,0 +1,26 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Launch Program",
+            "program": "${workspaceFolder}/app.js",
+            "args": [
+                "-e",
+                "rfinex",
+                "-m",
+                "trx_eth",
+                "-a",
+                "20000",
+                "--access_key",
+                "PF0dwlFv3G3mkoD7Z6xCFf0yZUzThf7S0ECO3T8w",
+                "--secret_key",
+                "nDSa0rAGQpNgk1V1nUemFbDrAlvBtP8rQ61b4TaE"
+            ]
+        }
+    ]
+}
