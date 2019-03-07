@@ -4,7 +4,7 @@ const crypto = require('crypto');
 let axiosInstance = axios.create({
     baseURL: 'https://api.rfinex.com/api/v1',
     headers: {},
-    timeout: 30000, // 超时时间
+    timeout: 60000, // 超时时间
 })
 // Add a request interceptor
 axiosInstance.interceptors.request.use(function (config) {

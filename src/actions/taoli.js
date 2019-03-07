@@ -111,8 +111,9 @@ async function watchHandicap() {
     let currentLowSellPriceExceptMy = depth.asks[0][0]; // 当前最低价卖单 (除了套利机器人下的单外)
     if (currentHighBuyPriceExceptMy !== highBuyPrice || currentLowSellPriceExceptMy !== lowSellPrice) {
         // 因为深度数据的滞后性（深度是从redis中取，可能数据库已经变更），所以再次确认一遍
+        console.log('A',currentHighBuyPriceExceptMy,currentLowSellPriceExceptMy)
         await sleep(500);
-        const depthAgain = apiInstance.getDepth(market, 2);
+        const depthAgain = await apiInstance.getDepth(market, 2);
         orders.forEach(item => {
             if (item.type === 'OrderAsk') {
                 for (let i = 0; i < depthAgain.asks.length; i++) {
@@ -139,6 +140,7 @@ async function watchHandicap() {
         currentHighBuyPriceExceptMy = depthAgain.bids[0][0]; // 当前最高价买单 (除了套利机器人下的单外)
         currentLowSellPriceExceptMy = depthAgain.asks[0][0]; // 当前最低价卖单 (除了套利机器人下的单外)
         if (currentHighBuyPriceExceptMy !== highBuyPrice || currentLowSellPriceExceptMy !== lowSellPrice) {
+            console.log('B',currentHighBuyPriceExceptMy,currentLowSellPriceExceptMy)
             // 盘口变了 应停止所有操作
             console.log('盘口变了')
             isHandicapChange = true
