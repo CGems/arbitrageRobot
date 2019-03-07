@@ -13,10 +13,19 @@ axiosInstance.interceptors.request.use(function (config) {
         let url = "/api/v1" + config.url
         let queryStr = '';
         let tonce = Date.now();
-        const params = {
-            tonce,
-            access_key: argv.access_key,
-            ...config.params
+        let params;
+        if (config.method === 'get') {
+            params = {
+                tonce,
+                access_key: argv.access_key,
+                ...config.params
+            }
+        } else if (config.method === 'post') {
+            params = {
+                tonce,
+                access_key: argv.access_key,
+                ...config.data
+            }
         }
         const keys = Object.keys(params).sort()
         keys.forEach((v) => {
@@ -56,13 +65,16 @@ axiosInstance.interceptors.response.use(function (response) {
 
 
 module.exports = class {
+
     static async getTickers() {
         return await axiosInstance.get('/tickers');
     }
+
     static async getTicketByMarket(market) {
         const res = await axiosInstance.get(`/tickers/${market}`);
         return res.data;
     }
+
     static async getDepth(market, limit) {
         const res = await axiosInstance.get('/depth', {
             params: {
@@ -72,12 +84,14 @@ module.exports = class {
         });
         return res.data;
     }
+
     static async getUserInfo() {
         const res = await axiosInstance.get('/members/me', {
             needAuth: true // 需要鉴权
         });
         return res.data;
     }
+
     static async getMyAccount(currency) {
         // 返回了 head和body
         const res = await axiosInstance.get(`/members/accounts/${currency}`, {
@@ -85,6 +99,7 @@ module.exports = class {
         });
         return res.data.body;
     }
+
     static async getOrders(market, limit = 100) {
         const res = await axiosInstance.get('/orders', {
             params: {
@@ -96,8 +111,58 @@ module.exports = class {
         return res.data;
     }
 
+    static async getOrderById(id) {
+        const res = await axiosInstance.get('/order', {
+            params: { id },
+            needAuth: true // 需要鉴权
+        });
+        return res.data;
+    }
+
     static async getMarkets() {
         const res = await axiosInstance.get('/markets');
+        return res.data;
+    }
+
+    static async sellOrBuy(side, market, volume, price) {
+        const res = await axiosInstance.post('/orders',
+            {
+                side,
+                market,
+                volume,
+                price
+            },
+            {
+                needAuth: true // 需要鉴权
+            });
+        return res.data.body
+    }
+
+    static async sell(market, volume, price) {
+        return await sellOrBuy('sell', market, volume, price);
+    }
+
+    static async buy(market, volume, price) {
+        return await sellOrBuy('buy', market, volume, price);
+    }
+
+    static async cancelOrder(id) {
+        const res = await axiosInstance.post('/order/delete',
+            {
+                id
+            }, {
+                needAuth: true // 需要鉴权
+            });
+        return res.data;
+    }
+
+    static async cancelManyOrders(ids) {
+        const res = await axiosInstance.post('/orders/delete',
+            {
+                ids
+            }, {
+                needAuth: true // 需要鉴权
+            });
         return res.data;
     }
 }

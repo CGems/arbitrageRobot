@@ -13,7 +13,7 @@
                 "-e",
                 "rfinex",
                 "-m",
-                "trx_eth",
+                "bfc_fnb",
                 "-a",
                 "20000",
                 "--access_key",
