@@ -13,13 +13,13 @@
                 "-e",
                 "rfinex",
                 "-m",
-                "bfc_fnb",
+                "btc_cnyr",
                 "-a",
-                "20000",
+                "1",
                 "--access_key",
-                "PF0dwlFv3G3mkoD7Z6xCFf0yZUzThf7S0ECO3T8w",
+                "VR9KoPvXQhY8umPMjpgPG8l28By5pN8TOhFMYJKC",
                 "--secret_key",
-                "nDSa0rAGQpNgk1V1nUemFbDrAlvBtP8rQ61b4TaE"
+                "8qHC5Caavsa6Q0Upto8jz0Odo5trv5akqQUeM5GF"
             ]
         }
     ]

@@ -28,4 +28,8 @@ const argv = require('yargs')
     .alias({ version: 'v', help: 'h' })
     .argv;
 
-taoli()
+try {
+    taoli()
+} catch (error) {
+    taoli()
+}

@@ -20,12 +20,13 @@ let currencyBaseAccountBalance; // 基础货币余额
 let closedPendingOrderId; // 封闭单的ID (低价卖单或高价买单，数量是刻度值)
 let operatingStatus = 'close'; // 套利机器人运行状态
 let closedPendingOrderStatus = 'close'; // 封闭单情况
-let isHandicapChange = false;
+let isHandicapChange = false; // 盘口是否改变
 let highBuyPrice; // 最高价买单
 let lowSellPrice; // 最低价卖单
-let userId; // 套利账户ID
+let tradeAmount;
 
 async function init() {
+    console.log('获取市场行情和账户余额');
     const resultList = await Promise.all([apiInstance.getTicketByMarket(market), getAccount()]);
     const currencyBodyPrice = resultList[0].ticker.last; // 最新价格
     if (new BigNumber(currencyBaseAccountBalance).div(currencyBodyPrice).isGreaterThanOrEqualTo(currencyBodyAccountBalance)) { // 初始化时判断第一次是买还是卖
@@ -45,19 +46,70 @@ async function getAccount() {
     const resultList = await Promise.all([apiInstance.getMyAccount(currencyBody), apiInstance.getMyAccount(currencyBase)]);
     currencyBodyAccountBalance = resultList[0].balance;
     currencyBaseAccountBalance = resultList[1].balance;
-    userId = resultList[0].member_id;
 }
 
-async function closedPendingOrder(type, price) {
-    if (isHandicapChange) { //如果盘口变了
-        if (closedPendingOrderStatus === 'running') {
-            try {
-                await apiInstance.cancelOrder(closedPendingOrderId);
-            } catch (error) {
-                error
+async function watchHandicap(price) {
+    if (operatingStatus === 'close') {
+        return
+    }
+    await sleep(1000);
+    // 如无别人挂单干预 盘口周围除去机器人可能挂的封闭单和待成交单之外就是原来的盘口
+    const depth = await apiInstance.getDepth(market, 2);
+    if (tradeType === 'buy') {
+        for (let i = 0; i < depth.asks.length; i++) {
+            if (price.plus(priceInterval).isEqualTo(depth.asks[i][0])) {
+                depth.asks[i][1] = new BigNumber(depth.asks[i][1]).minus(amountInterval).toString()
+                break
             }
+        }
+        for (let i = 0; i < depth.bids.length; i++) {
+            if (price.isEqualTo(depth.bids[i][0])) {
+                depth.bids[i][1] = new BigNumber(depth.bids[i][1]).minus(tradeAmount).toString()
+                break
+            }
+        }
+    } else {
+        for (let i = 0; i < depth.bids.length; i++) {
+            if (price.minus(priceInterval).isEqualTo(depth.bids[i][0])) {
+                depth.bids[i][1] = new BigNumber(depth.bids[i][1]).minus(amountInterval).toString()
+                break
+            }
+        }
+        for (let i = 0; i < depth.asks.length; i++) {
+            if (price.isEqualTo(depth.asks[i][0])) {
+                depth.asks[i][1] = new BigNumber(depth.asks[i][1]).minus(tradeAmount).toString()
+                break
+            }
+        }
+    }
+    depth.asks = depth.asks.filter(item => {
+        return item[1] > 0
+    })
+    depth.bids = depth.bids.filter(item => {
+        return item[1] > 0
+    })
+    let currentHighBuyPriceExceptMy = depth.bids[0][0]; // 当前最高价买单 (除了套利机器人下的单外)
+    let currentLowSellPriceExceptMy = depth.asks[0][0]; // 当前最低价卖单 (除了套利机器人下的单外)
+    if (currentHighBuyPriceExceptMy !== highBuyPrice || currentLowSellPriceExceptMy !== lowSellPrice) {
+        // 因为深度数据的滞后性（深度是从redis中取，可能数据库已经变更）
+        // 盘口变了 应停止所有操作
+        console.log('盘口变了')
+        isHandicapChange = true
+        await apiInstance.cancelAllOrdersByMarket(market)
+        closedPendingOrderId = undefined;
+        operatingStatus = 'close'
+        await sleep(3000);
+        taoli();
+    } else {
+        watchHandicap(price)
+    }
+}
+
+async function closedPendingOrder(price) {
+    const type = tradeType === 'buy' ? 'sell' : 'buy';
+    if (isHandicapChange || operatingStatus === 'close') { //如果盘口变了
+        if (closedPendingOrderStatus === 'running') {
             closedPendingOrderStatus = 'close';
-            closedPendingOrderId = undefined;
             return
         }
     }
@@ -70,119 +122,99 @@ async function closedPendingOrder(type, price) {
     const { state } = await apiInstance.getOrderById(closedPendingOrderId);
     if (state === 'wait') { // 等待成交（此状态为预期状态）
         await sleep(1000);
-        closedPendingOrder(type, price); // 循环检测
+        closedPendingOrder(price); // 循环检测
     } else {
         // 封闭单已被他人成交
         closedPendingOrderStatus = 'close'
         closedPendingOrderId = undefined;
         await sleep(1000);
-        closedPendingOrder(type, price);
+        closedPendingOrder(price);
     }
 }
 
-async function watchHandicap() {
-    await sleep(1000);
-    // 如无别人挂单干预 盘口周围除去机器人可能挂的封闭单和待成交单之外就是原来的盘口
-    const [depth, orders] = await Promise.all([apiInstance.getDepth(market, 2), apiInstance.getOrders(market, 10)])
-    orders.forEach(item => {
-        if (item.type === 'OrderAsk') {
-            for (let i = 0; i < depth.asks.length; i++) {
-                if (depth.asks[i][0] === item.price) {
-                    depth.asks[i][1] = new BigNumber(depth.asks[i][1]).minus(item.volume).toString()
-                    break
-                }
-            }
-        } else {
-            for (let i = 0; i < depth.bids.length; i++) {
-                if (depth.bids[i][0] === item.price) {
-                    depth.bids[i][1] = new BigNumber(depth.bids[i][1]).minus(item.volume).toString()
-                    break
-                }
-            }
+async function taoliOrderLoop(price) {
+    if (isHandicapChange || operatingStatus === 'close') { //如果盘口变了
+        return
+    }
+    const { id } = await apiInstance.sellOrBuy(tradeType, market, tradeAmount, price)
+    await sleep(500);
+    try {
+        await apiInstance.cancelOrder(id)
+    } catch (error) {
+        if (error.response.data.head.code === '2004') {
+            tradeAmount = 0;
+            console.log(`${tradeType === 'buy' ? '买入' : '卖出'}成功`);
+            tradeType = tradeType === 'buy' ? 'sell' : 'buy'
+            operatingStatus = 'close';
+            await sleep(3000);
+            await apiInstance.cancelAllOrdersByMarket(market)
+            await sleep(2000);
+            await getAccount();
+            taoli();
+            return
         }
-    })
-    depth.asks = depth.asks.filter(item => {
-        return item[1] > 0
-    })
-    depth.bids = depth.bids.filter(item => {
-        return item[1] > 0
-    })
-    let currentHighBuyPriceExceptMy = depth.bids[0][0]; // 当前最高价买单 (除了套利机器人下的单外)
-    let currentLowSellPriceExceptMy = depth.asks[0][0]; // 当前最低价卖单 (除了套利机器人下的单外)
-    if (currentHighBuyPriceExceptMy !== highBuyPrice || currentLowSellPriceExceptMy !== lowSellPrice) {
-        // 因为深度数据的滞后性（深度是从redis中取，可能数据库已经变更），所以再次确认一遍
-        console.log('A',currentHighBuyPriceExceptMy,currentLowSellPriceExceptMy)
-        await sleep(500);
-        const depthAgain = await apiInstance.getDepth(market, 2);
-        orders.forEach(item => {
-            if (item.type === 'OrderAsk') {
-                for (let i = 0; i < depthAgain.asks.length; i++) {
-                    if (depthAgain.asks[i][0] === item.price) {
-                        depthAgain.asks[i][1] = new BigNumber(depthAgain.asks[i][1]).minus(item.volume).toString()
-                        break
-                    }
-                }
-            } else {
-                for (let i = 0; i < depthAgain.bids.length; i++) {
-                    if (depthAgain.bids[i][0] === item.price) {
-                        depthAgain.bids[i][1] = new BigNumber(depthAgain.bids[i][1]).minus(item.volume).toString()
-                        break
-                    }
-                }
-            }
-        })
-        depthAgain.asks = depthAgain.asks.filter(item => {
-            return item[1] > 0
-        })
-        depthAgain.bids = depthAgain.bids.filter(item => {
-            return item[1] > 0
-        })
-        currentHighBuyPriceExceptMy = depthAgain.bids[0][0]; // 当前最高价买单 (除了套利机器人下的单外)
-        currentLowSellPriceExceptMy = depthAgain.asks[0][0]; // 当前最低价卖单 (除了套利机器人下的单外)
-        if (currentHighBuyPriceExceptMy !== highBuyPrice || currentLowSellPriceExceptMy !== lowSellPrice) {
-            console.log('B',currentHighBuyPriceExceptMy,currentLowSellPriceExceptMy)
-            // 盘口变了 应停止所有操作
-            console.log('盘口变了')
-            isHandicapChange = true
+    }
+    let isLoop = true;
+    let volume;
+    while (isLoop) {
+        const result = await apiInstance.getOrderById(id)
+        if (result.state === 'cancel') {
+            volume = result.volume
+            isLoop = false;
         } else {
-            watchHandicap()
+            await sleep(500);
         }
+    }
+    if (new BigNumber(volume).isEqualTo(0)) {
+        tradeAmount = 0;
+        console.log(`${tradeType === 'buy' ? '买' : '卖'}出成功`);
+        tradeType = tradeType === 'buy' ? 'sell' : 'buy'
+        operatingStatus = 'close';
+        await sleep(3000);
+        await apiInstance.cancelAllOrdersByMarket(market)
+        await sleep(2000);
+        await getAccount();
+        taoli();
+        return
+    } else if (new BigNumber(volume).isLessThan(tradeAmount)) {
+        tradeAmount = volume
+        taoliOrderLoop(price)
     } else {
-        watchHandicap()
+        taoliOrderLoop(price)
     }
 }
 
-module.exports = async function taoli() {
-    isHandicapChange = false; // 重置
+async function taoli() {
+    isHandicapChange = false; // 重置是否盘口变化
     if (priceFixed === undefined) { // 初始化
         await init()
     }
+    console.log('获取深度')
     const depth = await apiInstance.getDepth(market, 1);
     highBuyPrice = depth.bids[0][0]; // 最高价买单
     lowSellPrice = depth.asks[0][0]; // 最低价卖单
     const taoliBuyPrice = priceInterval.times(9).plus(highBuyPrice); // 套利的低价买单价格
     const taoliSellPrice = new BigNumber(lowSellPrice).minus(priceInterval.times(9)); // 套利的高价卖单价格
-    let amount;
     if (tradeType === 'buy') {
-        const retainedBodyCurrency = amountInterval.times(50) // 留存的主体货币的数量
+        const retainedBodyCurrency = amountInterval.times(20) // 留存的主体货币的数量
         if (retainedBodyCurrency.isGreaterThan(currencyBodyAccountBalance)) {
             console.log(`无法下低价买单，账户必须有${retainedBodyCurrency.toFixed(2, 1)}${currencyBody}`)
             return;
         }
         // 买的数量 = (基础货币-50次的卡卖单的基础货币数量) / 套利低价买单价格，并精度截断取整
-        amount = new BigNumber(currencyBaseAccountBalance).minus(amountInterval.times(50).times(taoliSellPrice)).div(taoliBuyPrice).toFixed(amountFixed, 1);
+        tradeAmount = new BigNumber(currencyBaseAccountBalance).minus(amountInterval.times(30).times(taoliSellPrice)).div(taoliBuyPrice).toFixed(amountFixed, 1);
 
     } else {
-        const retainedBaseCurrency = amountInterval.times(50).times(taoliSellPrice) // 留存的基础货币的数量
+        const retainedBaseCurrency = amountInterval.times(20).times(taoliSellPrice) // 留存的基础货币的数量
         if (retainedBaseCurrency.isGreaterThan(currencyBaseAccountBalance)) {
             console.log(`无法下高价卖单，账户必须有${retainedBaseCurrency.toFixed(2, 1)}${currencyBase}`)
             return;
         }
         // 卖的数量 = (主体货币-50次的卡卖单的主体货币数量) / 套利高价卖单价格，并精度截断取整
-        amount = new BigNumber(currencyBodyAccountBalance).minus(amountInterval.times(50)).div(taoliSellPrice).toFixed(amountFixed, 1);
+        tradeAmount = new BigNumber(currencyBodyAccountBalance).minus(amountInterval.times(30)).toFixed(amountFixed, 1);
     }
-    amount = Math.min(amount, argv.a); // 数量在可买/卖数量和设定成交量中取最小值
-    if (amount <= 0) {
+    tradeAmount = Math.min(tradeAmount, argv.a); // 数量在可买/卖数量和设定成交量中取最小值
+    if (tradeAmount <= 0) {
         console.log('账户余额不支持进行套利');
         return;
     }
@@ -191,12 +223,19 @@ module.exports = async function taoli() {
     const earnMoneyEveryUnit = sellMoneyEveryUnit.minus(buyMoneyEveryUnit); // 每单位获利
     if (earnMoneyEveryUnit.isGreaterThan(0)) { // 如果能获利
         operatingStatus = 'running'
-        console.log(`按照成交量${amount}${argv.m.split('_')[0]},每买入卖出可获得${earnMoneyEveryUnit.times(amount).toFixed(2, 1)}${argv.m.split('_')[1]}`);
-        closedPendingOrder(tradeType === 'buy' ? 'sell' : 'buy', tradeType === 'buy' ? taoliBuyPrice.plus(priceInterval).toString() : taoliSellPrice.minus(priceInterval).toString()); // 封闭单的下单与监控
-        watchHandicap();
+        console.log(`按照成交量${tradeAmount}${argv.m.split('_')[0]},每买入卖出可获得${earnMoneyEveryUnit.times(tradeAmount).toFixed(2, 1)}${argv.m.split('_')[1]}`);
+        console.log('启动盘口检测');
+        watchHandicap(tradeType === 'buy' ? taoliBuyPrice : taoliSellPrice);
+        console.log('启动封闭单下单与维持');
+        await closedPendingOrder(tradeType === 'buy' ? taoliBuyPrice.plus(priceInterval).toString() : taoliSellPrice.minus(priceInterval).toString()); // 封闭单的下单与监控
+        taoliOrderLoop(tradeType === 'buy' ? taoliBuyPrice.toString() : taoliSellPrice.toString());
     } else {
+        operatingStatus = 'close'
         console.log('盘口过小，暂无套利空间')
+        await apiInstance.cancelAllOrdersByMarket(market);
         await sleep(1000);
         taoli()
     }
 }
+
+module.exports = taoli;
