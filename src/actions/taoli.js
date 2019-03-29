@@ -34,6 +34,7 @@ async function init() {
     } else {
         tradeType = 'sell';
     }
+    tradeType = argv.t || tradeType
     priceFixed = resultList[0].bid.fixed; // 价格精度
     amountFixed = resultList[0].ask.fixed; // 数量精度
     priceInterval = new BigNumber(0.1).pow(priceFixed); // 价格刻度
@@ -46,6 +47,7 @@ async function getAccount() {
     const resultList = await Promise.all([apiInstance.getMyAccount(currencyBody), apiInstance.getMyAccount(currencyBase)]);
     currencyBodyAccountBalance = resultList[0].balance;
     currencyBaseAccountBalance = resultList[1].balance;
+    console.log(`账户：${currencyBody}:${currencyBodyAccountBalance} ${currencyBase}:${currencyBaseAccountBalance}`)
 }
 
 async function watchHandicap(price) {
@@ -57,8 +59,8 @@ async function watchHandicap(price) {
     const depth = await apiInstance.getDepth(market, 2);
     if (tradeType === 'buy') {
         for (let i = 0; i < depth.asks.length; i++) {
-            if (price.plus(priceInterval).isEqualTo(depth.asks[i][0])) {
-                depth.asks[i][1] = new BigNumber(depth.asks[i][1]).minus(amountInterval).toString()
+            if (price.plus(argv.r ||priceInterval).isEqualTo(depth.asks[i][0])) {
+                depth.asks[i][1] = new BigNumber(depth.asks[i][1]).minus(argv.n || amountInterval).toString()
                 break
             }
         }
@@ -70,8 +72,8 @@ async function watchHandicap(price) {
         }
     } else {
         for (let i = 0; i < depth.bids.length; i++) {
-            if (price.minus(priceInterval).isEqualTo(depth.bids[i][0])) {
-                depth.bids[i][1] = new BigNumber(depth.bids[i][1]).minus(amountInterval).toString()
+            if (price.minus(argv.r ||priceInterval).isEqualTo(depth.bids[i][0])) {
+                depth.bids[i][1] = new BigNumber(depth.bids[i][1]).minus(argv.n || amountInterval).toString()
                 break
             }
         }
@@ -115,7 +117,7 @@ async function closedPendingOrder(price) {
     }
     if (closedPendingOrderStatus === 'close') {
         // 下封闭单（机器人想低价买就下低价的卖单，反之想高价卖，就下高价的买单，把盘口缩小，方便捕获交易机器人单，数量是刻度值）
-        const { id } = await apiInstance.sellOrBuy(type, market, amountInterval.toString(), price);
+        const { id } = await apiInstance.sellOrBuy(type, market, argv.n || amountInterval.toString(), price);
         closedPendingOrderId = id;
         closedPendingOrderStatus = 'running';
     }
@@ -193,8 +195,8 @@ async function taoli() {
     const depth = await apiInstance.getDepth(market, 1);
     highBuyPrice = depth.bids[0][0]; // 最高价买单
     lowSellPrice = depth.asks[0][0]; // 最低价卖单
-    const taoliBuyPrice = priceInterval.times(9).plus(highBuyPrice); // 套利的低价买单价格
-    const taoliSellPrice = new BigNumber(lowSellPrice).minus(priceInterval.times(9)); // 套利的高价卖单价格
+    const taoliBuyPrice = argv.r ? new BigNumber(argv.r).plus(highBuyPrice) : priceInterval.times(9).plus(highBuyPrice); // 套利的低价买单价格
+    const taoliSellPrice = argv.r ? new BigNumber(lowSellPrice).minus(argv.r) : new BigNumber(lowSellPrice).minus(priceInterval.times(9)); // 套利的高价卖单价格
     if (tradeType === 'buy') {
         const retainedBodyCurrency = amountInterval.times(20) // 留存的主体货币的数量
         if (retainedBodyCurrency.isGreaterThan(currencyBodyAccountBalance)) {
@@ -227,7 +229,7 @@ async function taoli() {
         console.log('启动盘口检测');
         watchHandicap(tradeType === 'buy' ? taoliBuyPrice : taoliSellPrice);
         console.log('启动封闭单下单与维持');
-        await closedPendingOrder(tradeType === 'buy' ? taoliBuyPrice.plus(priceInterval).toString() : taoliSellPrice.minus(priceInterval).toString()); // 封闭单的下单与监控
+        await closedPendingOrder(tradeType === 'buy' ? taoliBuyPrice.plus(argv.r || priceInterval).toString() : taoliSellPrice.minus(argv.r || priceInterval).toString()); // 封闭单的下单与监控
         taoliOrderLoop(tradeType === 'buy' ? taoliBuyPrice.toString() : taoliSellPrice.toString());
     } else {
         operatingStatus = 'close'

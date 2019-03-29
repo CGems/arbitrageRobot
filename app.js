@@ -15,6 +15,18 @@ const argv = require('yargs')
         alias: 'a',
         describe: '最大成交数量',
     })
+    .option('orderType', {
+        alias: 't',
+        describe: '下单类型',
+    })
+    .option('closeRange', {
+        alias: 'r',
+        describe: '手动设置封单跨度',
+    })
+    .option('closeAmount', {
+        alias: 'n',
+        describe: '手动设置封单数量',
+    })
     .option('access_key', {
         describe: '公钥',
         demandOption: true
